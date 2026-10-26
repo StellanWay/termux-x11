@@ -17,6 +17,7 @@
         <ListPreference app:key="displayFilteringMode" app:defaultValue="bilinear" app:entries="@array/displayFilteringVariants" app:entryValues="@array/displayFilteringVariants"  />
         <SwitchPreferenceCompat app:key="adjustResolution" app:defaultValue="false" />
         <SwitchPreferenceCompat app:key="displayStretch" app:defaultValue="false" />
+        <SwitchPreferenceCompat app:key="presentOnExternalDisplay" app:defaultValue="true" />
         <SwitchPreferenceCompat app:key="Reseed" app:defaultValue="false" />
         <SwitchPreferenceCompat app:key="PIP" app:defaultValue="false" />
         <SwitchPreferenceCompat app:key="fullscreen" app:defaultValue="false" />

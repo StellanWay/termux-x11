@@ -25,6 +25,33 @@
             android:visibility="visible"
             android:layout_gravity="center" />
 
+        <!-- [external-display] Covers the frozen picture while the output is on another display.
+             LorieView stays VISIBLE because an invisible view can not take focus, and all keyboard
+             input is dispatched to the focused view. Neither view is clickable, so touches still
+             reach the frame's OnTouchListener (the trackpad). -->
+        <FrameLayout
+            android:id="@+id/external_display_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/black"
+            android:clickable="false"
+            android:focusable="false"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/external_display_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginLeft="24dp"
+                android:layout_marginRight="24dp"
+                android:clickable="false"
+                android:focusable="false"
+                android:gravity="center"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+        </FrameLayout>
+
         <LinearLayout
             android:id="@+id/stub"
             android:layout_width="match_parent"

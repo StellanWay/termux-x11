@@ -78,6 +78,10 @@ public class LorieView extends SurfaceView implements InputStub {
     private float inputSourceLeft = 0.f, inputSourceTop = 0.f;
     private float inputSourceWidth = 0.f, inputSourceHeight = 0.f;
     private boolean dimensionsFrozen = false;
+    // [external-display] Non-null while the picture is presented on a secondary display.
+    private Surface externalSurface = null;
+    private int externalWidth = 0, externalHeight = 0;
+    private float externalRefreshRate = 0.f;
     boolean commitedText = false;
     private final InputConnection mConnection = new BaseInputConnection(this, false) {
         private CharSequence currentComposingText = null;
@@ -298,7 +302,7 @@ public class LorieView extends SurfaceView implements InputStub {
         @Override public void surfaceCreated(@NonNull SurfaceHolder holder) {}
 
         @Override public void surfaceChanged(@NonNull SurfaceHolder holder, int f, int width, int height) {
-            LorieView.this.surfaceChanged(mNativeContext, holder.getSurface());
+            applyOutputSurface();
             width = getMeasuredWidth();
             height = getMeasuredHeight();
 
@@ -307,9 +311,34 @@ public class LorieView extends SurfaceView implements InputStub {
         }
 
         @Override public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
-            LorieView.this.surfaceChanged(mNativeContext, null);
+            // The external display may still be presenting, so this must not unconditionally
+            // detach the surface from the renderer.
+            applyOutputSurface();
         }
     };
+
+    /**
+     * [external-display] Draws on {@code surface} instead of this view's own surface.
+     * Passing null returns the picture to this view.
+     */
+    public void setExternalOutput(Surface surface, int width, int height, float refreshRate) {
+        externalSurface = surface;
+        externalWidth = width;
+        externalHeight = height;
+        externalRefreshRate = refreshRate;
+        applyOutputSurface();
+        updateViewport(); // a new output size means a new viewport and a new X screen size
+    }
+
+    public boolean isPresentingOnExternalDisplay() {
+        return externalSurface != null;
+    }
+
+    /** [external-display] The only place deciding which surface the renderer draws on. */
+    private void applyOutputSurface() {
+        Surface s = externalSurface != null ? externalSurface : getHolder().getSurface();
+        surfaceChanged(mNativeContext, s != null && s.isValid() ? s : null);
+    }
 
     public LorieView(Context context, AttributeSet attrs) { super(context, attrs); }
 
@@ -428,14 +457,23 @@ public class LorieView extends SurfaceView implements InputStub {
 
     private void sendWindowChange() {
         String name;
-        int framerate = (int) (getDisplay() != null ? getDisplay().getRefreshRate() : 30);
+        int framerate;
 
-        if (getDisplay() == null || getDisplay().getDisplayId() == Display.DEFAULT_DISPLAY)
-            name = "builtin";
-        else if (SamsungDexUtils.checkDeXEnabled(activity))
-            name = "dex";
-        else
+        // [external-display] The X server's vblank pacing should follow the display that is
+        // actually being drawn on, which is not necessarily this view's display.
+        if (externalSurface != null) {
             name = "external";
+            framerate = (int) (externalRefreshRate > 0.f ? externalRefreshRate : 30.f);
+        } else {
+            framerate = (int) (getDisplay() != null ? getDisplay().getRefreshRate() : 30);
+
+            if (getDisplay() == null || getDisplay().getDisplayId() == Display.DEFAULT_DISPLAY)
+                name = "builtin";
+            else if (SamsungDexUtils.checkDeXEnabled(activity))
+                name = "dex";
+            else
+                name = "external";
+        }
 
         sendWindowChange(mNativeContext, p.x, p.y, framerate, name);
     }
@@ -445,7 +483,13 @@ public class LorieView extends SurfaceView implements InputStub {
     private void setRendererViewport(int viewportLeft, int viewportTop, int viewportWidth, int viewportHeight,
                                             float sourceLeft, float sourceTop, float sourceWidth, float sourceHeight) {
         MainActivity.handler.post(() -> {
-            inputViewport.set(viewportLeft, viewportTop, viewportLeft + viewportWidth, viewportTop + viewportHeight);
+            // [external-display] The rect comes in output surface pixels and is scaled into view
+            // pixels; without a laid out view there is no meaningful scale, and a zero one would
+            // make the input transform degenerate. The next report or updateViewport() fixes it.
+            if (externalSurface != null && (getMeasuredWidth() <= 0 || getMeasuredHeight() <= 0))
+                return;
+
+            setInputViewport(viewportLeft, viewportTop, viewportLeft + viewportWidth, viewportTop + viewportHeight);
             inputSourceLeft = sourceLeft;
             inputSourceTop = sourceTop;
             inputSourceWidth = sourceWidth;
@@ -491,12 +535,32 @@ public class LorieView extends SurfaceView implements InputStub {
         updateViewport();
     }
 
+    /**
+     * [external-display] Stores a rect given in output surface pixels. Everything downstream - the
+     * input transform and the pinch fractions in TouchInputHandler - works in this view's own
+     * coordinates, so the rect is scaled back when the output is an external display.
+     */
+    private void setInputViewport(int left, int top, int right, int bottom) {
+        float scaleX = 1.f, scaleY = 1.f;
+        if (externalSurface != null && externalWidth > 0 && externalHeight > 0) {
+            scaleX = getMeasuredWidth() / (float) externalWidth;
+            scaleY = getMeasuredHeight() / (float) externalHeight;
+        }
+
+        inputViewport.set(Math.round(left * scaleX), Math.round(top * scaleY),
+                Math.round(right * scaleX), Math.round(bottom * scaleY));
+    }
+
     private void updateViewport() {
         Prefs prefs = activity.prefs;
 
-        int surfaceW = getMeasuredWidth(), surfaceH = getMeasuredHeight();
-        // Views the insets reserve room for are hidden while the dimensions are frozen.
-        Rect insets = dimensionsFrozen ? NO_INSETS : contentInsets;
+        // [external-display] Geometry is computed against the surface actually being drawn on.
+        boolean external = externalSurface != null;
+        int surfaceW = external ? externalWidth : getMeasuredWidth();
+        int surfaceH = external ? externalHeight : getMeasuredHeight();
+        // Views the insets reserve room for are hidden while the dimensions are frozen, and they
+        // are not on the external display at all.
+        Rect insets = (dimensionsFrozen || external) ? NO_INSETS : contentInsets;
         int availableLeft = insets.left, availableTop = insets.top;
         int availableW = Math.max(0, surfaceW - insets.left - insets.right);
         int availableH = Math.max(0, surfaceH - insets.top - insets.bottom);
@@ -522,14 +586,15 @@ public class LorieView extends SurfaceView implements InputStub {
 
         // The picture keeps its size when the soft keyboard covers the bottom, it is just centered
         // in what is left visible, and only what still does not fit there is left to be scrolled.
-        int visibleH = Math.max(0, availableH - obscuredBottom);
+        // The keyboard is on the built-in screen, so it never covers an external display.
+        int visibleH = external ? availableH : Math.max(0, availableH - obscuredBottom);
         int left = availableLeft + (availableW - drawW) / 2;
         int top = availableTop + Math.max(0, (visibleH - drawH) / 2);
 
         viewport.set(left, top, left + drawW, top + drawH);
         int hiddenBottom = Math.max(0, viewport.bottom - (availableTop + visibleH));
         if ((rendererZoom == 100 && hiddenBottom == 0) || inputSourceWidth == 0.f || inputSourceHeight == 0.f) {
-            inputViewport.set(viewport);
+            setInputViewport(viewport.left, viewport.top, viewport.right, viewport.bottom);
             inputSourceLeft = inputSourceTop = 0.f;
             inputSourceWidth = p.x;
             inputSourceHeight = p.y;

@@ -43,6 +43,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.OrientationEventListener;
 import android.view.PointerIcon;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
@@ -56,6 +57,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.Keep;
@@ -99,6 +101,8 @@ public class MainActivity extends AppCompatActivity {
     protected ICmdEntryInterface service = null;
     public TermuxX11ExtraKeys mExtraKeys;
     private DisplayManager displayManager;
+    // [external-display] Presents the picture on XR glasses / HDMI displays that are not a mirror.
+    private ExternalDisplayOutput externalDisplay;
     private boolean showIMEWhileExternalConnected = true;
     private boolean externalKeyboardConnected = false;
     private View.OnKeyListener mLorieKeyListener;
@@ -359,6 +363,20 @@ public class MainActivity extends AppCompatActivity {
         lorieView.setCallback((screenWidth, screenHeight, inputTransform) ->
                 mInputHandler.handleInputTransformChanged(screenWidth, screenHeight, inputTransform));
 
+        // [external-display]
+        externalDisplay = new ExternalDisplayOutput(this, new ExternalDisplayOutput.Callback() {
+            @Override public void onSurfaceReady(Surface surface, int width, int height, float refreshRate) {
+                lorieView.setExternalOutput(surface, width, height, refreshRate);
+                showExternalDisplayOverlay(width, height, refreshRate);
+            }
+
+            @Override public void onSurfaceGone() {
+                lorieView.setExternalOutput(null, 0, 0, 0.f);
+                findViewById(R.id.external_display_overlay).setVisibility(View.GONE);
+                lorieView.requestFocus();
+            }
+        });
+
         displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
         orientationListener = new OrientationEventListener(this) {
             @Override public void onOrientationChanged(int orientation) {
@@ -419,6 +437,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         handler.removeCallbacks(screenIdleTimeoutCheck);
         handler.removeCallbacks(serverWatchdog);
+        // [external-display] Also releases the presentation, which onPause() deliberately leaves up.
+        if (externalDisplay != null)
+            externalDisplay.stop();
         if (mInputHandler != null)
             mInputHandler.onDestroy();
         instances.values().removeIf(ref -> ref.get() == this);
@@ -806,6 +827,14 @@ public class MainActivity extends AppCompatActivity {
         useTermuxEKBarBehaviour = prefs.useTermuxEKBarBehaviour.get();
         showIMEWhileExternalConnected = prefs.showIMEWhileExternalConnected.get();
 
+        // [external-display]
+        if (externalDisplay != null) {
+            if (prefs.presentOnExternalDisplay.get())
+                externalDisplay.start();
+            else
+                externalDisplay.stop();
+        }
+
         findViewById(R.id.mouse_buttons).setVisibility(prefs.showMouseHelper.get() && "1".equals(prefs.touchMode.get()) && getLorieView().connected() ? View.VISIBLE : View.GONE);
         showMouseAuxButtons(prefs.showMouseHelper.get());
         showStylusAuxButtons(prefs.showStylusClickOverride.get());
@@ -832,6 +861,10 @@ public class MainActivity extends AppCompatActivity {
 
         lastServerHeartbeat = lastServerWatchdogRun = SystemClock.uptimeMillis();
         handler.postDelayed(serverWatchdog, SERVER_WATCHDOG_INTERVAL_MS);
+
+        // [external-display]
+        if (prefs.presentOnExternalDisplay.get())
+            externalDisplay.start();
     }
 
     private void checkServerHeartbeat() {
@@ -856,6 +889,12 @@ public class MainActivity extends AppCompatActivity {
 
         getLorieView().setKeyboardVisible(false);
 
+        // [external-display] The presentation deliberately outlives this activity being paused and
+        // stopped: it is a window on the other display, so X11 keeps showing there while other apps
+        // are used on the phone. It is only torn down in onDestroy(). Note that input does not follow
+        // it - key events go to the focused window, which is that other app, and the pointer belongs
+        // to whichever window is under it on the phone's own display.
+
         handler.removeCallbacks(serverWatchdog);
         findViewById(R.id.no_server_signal).setVisibility(View.GONE);
         orientationListener.disable();
@@ -866,6 +905,19 @@ public class MainActivity extends AppCompatActivity {
 
     public LorieView getLorieView() {
         return findViewById(R.id.lorieView);
+    }
+
+    /**
+     * [external-display] Covers the built-in screen while the picture is on another display.
+     * The overlay is not focusable and not clickable on purpose: LorieView must keep the focus (it
+     * is what receives key events and the IME), and touches must keep reaching the trackpad
+     * listener installed on its parent.
+     */
+    private void showExternalDisplayOverlay(int width, int height, float refreshRate) {
+        TextView text = findViewById(R.id.external_display_text);
+        text.setText(getString(R.string.external_display_overlay, width, height, Math.round(refreshRate)));
+        findViewById(R.id.external_display_overlay).setVisibility(View.VISIBLE);
+        getLorieView().requestFocus();
     }
 
     public ViewPager getTerminalToolbarViewPager() {

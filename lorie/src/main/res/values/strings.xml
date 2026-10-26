@@ -49,6 +49,9 @@ E.g. <b>META</b> for <i>META key</i>, \n
     <string name="lorie_pref_displayFilteringMode">Display filtering mode</string>
     <string name="lorie_pref_adjustResolution">Adjust the set resolution to fit screen orientation</string>
     <string name="lorie_pref_displayStretch">Stretch to fit display</string>
+    <string name="lorie_pref_presentOnExternalDisplay">Present on external display</string>
+    <string name="lorie_pref_presentOnExternalDisplay_summary">Draw the picture on a connected external display (XR glasses, HDMI) at its native resolution. The built-in screen keeps input focus and works as a trackpad. Has no effect on displays which only mirror the screen.</string>
+    <string name="external_display_overlay">Presenting on external display\n%1$d×%2$d @ %3$d Hz\n\nThis screen is a trackpad.</string>
     <string name="lorie_pref_Reseed">Reseed screen while soft keyboard is open</string>
     <string name="lorie_pref_Reseed_summary">The screen size will be adjusted while Soft Keyboard is open.</string>
     <string name="lorie_pref_PIP">PIP mode</string>
