@@ -1,5 +1,6 @@
 ext.termuxX11VersionName = {
-    def commit = 'git rev-parse --verify --short HEAD'.execute().text.trim()
+    // Run git in the repository, not wherever the Gradle daemon happens to live.
+    def commit = 'git rev-parse --verify --short HEAD'.execute(null, rootProject.projectDir).text.trim()
     def version = "1.03.01"
     "${version}-${commit.length() == 1 ? "nongit" : commit}-${(new Date()).format("dd.MM.yy")}"
 }()

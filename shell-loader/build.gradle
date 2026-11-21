@@ -43,6 +43,6 @@ android.defaultConfig.buildConfigField "String", "packageNotInstalledErrorText",
         \"After this you should download \\"termux-x11-universal-release.apk\\" and install it.\\n\""""
 android.defaultConfig.buildConfigField "String", "packageSignatureMismatchErrorText",
         "\"Signature verification of target application $targetApplicationId failed.\\nPlease, reinstall both termux-x11 package and Termux:X11 application from the same source\""
-android.defaultConfig.buildConfigField "String", "COMMIT", "\"" + ("git rev-parse HEAD\n".execute().getText().trim() ?: (System.getenv('CURRENT_COMMIT') ?: "NO_COMMIT")) + "\""
+android.defaultConfig.buildConfigField "String", "COMMIT", "\"" + ("git rev-parse HEAD\n".execute(null, rootProject.projectDir).getText().trim() ?: (System.getenv('CURRENT_COMMIT') ?: "NO_COMMIT")) + "\""
 
 apply from: 'companion-package.gradle'
