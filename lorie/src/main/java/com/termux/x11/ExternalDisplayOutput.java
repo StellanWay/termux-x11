@@ -3,6 +3,7 @@ package com.termux.x11;
 import android.app.Presentation;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.util.Log;
@@ -11,6 +12,7 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -26,8 +28,11 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
     private static final String TAG = "ExternalDisplayOutput";
 
     public interface Callback {
-        /** The display's surface is ready; the renderer should draw there from now on. */
-        void onSurfaceReady(Surface surface, int width, int height, float refreshRate);
+        /** The display's surfaces are ready; the renderer should draw there from now on. */
+        void onSurfaceReady(Surface surface, Surface cursorSurface, int width, int height, float refreshRate);
+
+        /** The pointer's surface was recreated, or is gone when null. */
+        void onCursorSurfaceReady(Surface cursorSurface);
 
         /** The display went away; the renderer must fall back to the built-in surface. */
         void onSurfaceGone();
@@ -37,6 +42,8 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
     private final Callback callback;
     private final DisplayManager displayManager;
     private Presentation presentation;
+    private SurfaceView cursorView;
+    private Surface cursorSurface;
     private int displayId = Display.INVALID_DISPLAY;
 
     public ExternalDisplayOutput(MainActivity activity, Callback callback) {
@@ -84,11 +91,16 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
     private void show(Display display) {
         final Presentation p = new Presentation(activity, display);
         final SurfaceView view = new SurfaceView(activity);
+        final SurfaceView pointer = new SurfaceView(activity);
+        // The pointer is a layer of its own, drawn by the X server and placed here.
+        pointer.getHolder().setFormat(PixelFormat.TRANSLUCENT);
+        pointer.setZOrderMediaOverlay(true);
 
         FrameLayout root = new FrameLayout(activity);
         root.setBackgroundColor(Color.BLACK);
         root.addView(view, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        root.addView(pointer, new FrameLayout.LayoutParams(32, 32));
 
         Window w = p.getWindow();
         if (w != null) {
@@ -118,7 +130,7 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
                 Rect frame = holder.getSurfaceFrame();
                 Log.d(TAG, "external output surface is " + frame.width() + "x" + frame.height() +
                         " @" + display.getRefreshRate() + "Hz on display " + display.getDisplayId());
-                callback.onSurfaceReady(holder.getSurface(), frame.width(), frame.height(), display.getRefreshRate());
+                callback.onSurfaceReady(holder.getSurface(), cursorSurface, frame.width(), frame.height(), display.getRefreshRate());
             }
 
             @Override public void surfaceDestroyed(SurfaceHolder holder) {
@@ -127,9 +139,31 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
             }
         });
 
+        pointer.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override public void surfaceCreated(SurfaceHolder holder) {}
+
+            @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                if (presentation != p)
+                    return;
+
+                cursorSurface = holder.getSurface();
+                callback.onCursorSurfaceReady(cursorSurface);
+            }
+
+            @Override public void surfaceDestroyed(SurfaceHolder holder) {
+                if (presentation != p)
+                    return;
+
+                cursorSurface = null;
+                callback.onCursorSurfaceReady(null);
+            }
+        });
+
         p.setOnDismissListener(d -> {
             if (presentation == p) {
                 presentation = null;
+                cursorView = null;
+                cursorSurface = null;
                 displayId = Display.INVALID_DISPLAY;
             }
             callback.onSurfaceGone();
@@ -139,6 +173,7 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
         try {
             p.show();
             presentation = p;
+            cursorView = pointer;
             displayId = display.getDisplayId();
         } catch (WindowManager.InvalidDisplayException e) {
             Log.w(TAG, "the display vanished before the presentation could be shown", e);
@@ -146,9 +181,27 @@ public final class ExternalDisplayOutput implements DisplayManager.DisplayListen
         }
     }
 
+    /** Puts the pointer's layer where it belongs on the presented picture. */
+    public void placeCursor(int x, int y, int width, int height) {
+        SurfaceView view = cursorView;
+        if (view == null)
+            return;
+
+        ViewGroup.LayoutParams params = view.getLayoutParams();
+        if (params.width != width || params.height != height) {
+            params.width = width;
+            params.height = height;
+            view.setLayoutParams(params);
+        }
+        view.setTranslationX(x);
+        view.setTranslationY(y);
+    }
+
     private void dismiss() {
         Presentation p = presentation;
         presentation = null;
+        cursorView = null;
+        cursorSurface = null;
         displayId = Display.INVALID_DISPLAY;
         // The dismiss listener reports the surface going away, so this is the only place that does.
         if (p != null)
