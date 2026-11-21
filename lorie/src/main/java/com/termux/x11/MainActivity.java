@@ -750,28 +750,32 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** The X server draws into the surface itself. */
-    void windowChanged(Surface surface) {
+    /** The X server draws into the surface itself. Returns whether the server took it. */
+    boolean windowChanged(Surface surface) {
         // The call waits for the server to take the surface, which a stalled one never does.
         surfacePending = serverStalled();
         if (service == null || surfacePending)
-            return;
+            return false;
 
         try {
             service.windowChanged(surface);
+            return true;
         } catch (RemoteException e) {
             Log.e("MainActivity", "Failed to hand the surface over to the X server", e);
+            return false;
         }
     }
 
-    void cursorWindowChanged(Surface surface) {
+    boolean cursorWindowChanged(Surface surface) {
         if (service == null || serverStalled())
-            return;
+            return false;
 
         try {
             service.cursorWindowChanged(surface);
+            return true;
         } catch (RemoteException e) {
             Log.e("MainActivity", "Failed to hand the cursor surface over to the X server", e);
+            return false;
         }
     }
 

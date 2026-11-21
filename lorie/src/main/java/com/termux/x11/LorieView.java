@@ -88,6 +88,8 @@ public class LorieView extends FrameLayout implements InputStub {
     private boolean dimensionsFrozen = false;
     // [external-display] Non-null while the picture is presented on a secondary display.
     private Surface externalSurface = null, externalCursorSurface = null;
+    // The surfaces the renderer was last given, so it is not handed the same one twice.
+    private Surface appliedPicture = null, appliedCursor = null;
     private int externalWidth = 0, externalHeight = 0;
     private float externalRefreshRate = 0.f;
     boolean commitedText = false;
@@ -395,7 +397,6 @@ public class LorieView extends FrameLayout implements InputStub {
         externalHeight = height;
         externalRefreshRate = refreshRate;
         applyOutputSurface();
-        updateViewport(); // a new output size means a new viewport and a new X screen size
     }
 
     /** [external-display] The display's pointer surface was recreated, or is gone when null. */
@@ -409,12 +410,28 @@ public class LorieView extends FrameLayout implements InputStub {
     }
 
     /** [external-display] The only place deciding which surfaces the renderer draws on. */
-    private void applyOutputSurface() {
+    private void applyOutputSurface() { applyOutputSurface(false); }
+
+    /**
+     * [external-display] Hands the current surfaces to the renderer, if they changed or if
+     * {@code force} says the renderer may have lost them, and then re-sends the viewport.
+     */
+    private void applyOutputSurface(boolean force) {
         boolean external = externalSurface != null;
         Surface picture = external ? externalSurface : pictureView.getHolder().getSurface();
         Surface cursor = external ? externalCursorSurface : cursorView.getHolder().getSurface();
-        activity.windowChanged(picture != null && picture.isValid() ? picture : null);
-        activity.cursorWindowChanged(cursor != null && cursor.isValid() ? cursor : null);
+        Surface newPicture = picture != null && picture.isValid() ? picture : null;
+        Surface newCursor = cursor != null && cursor.isValid() ? cursor : null;
+        // Handing a surface over drops the picture size the renderer expects, and ANativeWindow
+        // wrappers are not comparable, so the renderer takes every handed over surface for a new
+        // one. Handing the same surface over twice would therefore blank the picture.
+        if ((force || newPicture != appliedPicture) && activity.windowChanged(newPicture))
+            appliedPicture = newPicture;
+        if ((force || newCursor != appliedCursor) && activity.cursorWindowChanged(newCursor))
+            appliedCursor = newCursor;
+        // The viewport has to follow every hand over, otherwise the picture stays blank until
+        // something unrelated sends one.
+        updateViewport();
     }
 
     public LorieView(Context context, AttributeSet attrs) { super(context, attrs); }
@@ -463,8 +480,7 @@ public class LorieView extends FrameLayout implements InputStub {
 
     /** Hands the surface over to the X server that has missed it. */
     void sendSurface() {
-        applyOutputSurface();
-        updateViewport();
+        applyOutputSurface(true);
     }
 
     private void placeCursor() {
